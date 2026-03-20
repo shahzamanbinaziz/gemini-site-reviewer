@@ -1,20 +1,20 @@
 name: Run Site Reviewer
 on:
-  workflow_dispatch: # Allows manual trigger
+  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *' # Runs daily
+    - cron: '0 0 * * *'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4 # Updated to v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # Updated to v5
         with:
-          python-version: '3.9'
+          python-version: '3.10' # Fixes the "Unsupported Version" error
       - name: Install dependencies
-        run: pip install requests google-generativeai python-whois
+        run: pip install requests google-genai python-whois # Changed to google-genai
       - name: Run Reviewer
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
