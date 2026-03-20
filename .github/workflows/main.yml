@@ -4,23 +4,34 @@ on:
   schedule:
     - cron: '0 0 * * *'
 
+# This block is CRITICAL for fixing the 403 error
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4 # Updated to v4
+      - uses: actions/checkout@v4
+      
       - name: Set up Python
-        uses: actions/setup-python@v5 # Updated to v5
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # Fixes the "Unsupported Version" error
+          python-version: '3.10'
+          
       - name: Install dependencies
-        run: pip install requests google-genai python-whois # Changed to google-genai
+        run: pip install requests google-genai python-whois
+        
       - name: Run Reviewer
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python reviewer.py
+        
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./
+          publish_branch: gh-pages # This will create the branch for you
