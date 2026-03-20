@@ -1,37 +1,83 @@
-name: Run Site Reviewer
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
+import os
+import requests
+import time
+from google import genai
+from datetime import datetime
+import whois
 
-# This block is CRITICAL for fixing the 403 error
-permissions:
-  contents: write
-  pages: write
-  id-token: write
+# 1. Configuration
+TARGET_URL = "https://google.com" 
+client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+MODEL_ID = "gemini-2.0-flash" # Reverting to 2.0-flash as it's often more stable during 2.5 peaks
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: pip install requests google-genai python-whois
-        
-      - name: Run Reviewer
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python reviewer.py
-        
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./
-          publish_branch: gh-pages # This will create the branch for you
+def check_ads_txt(url):
+    try:
+        clean_url = url if url.startswith("http") else f"https://{url}"
+        r = requests.get(f"{clean_url}/ads.txt", timeout=10)
+        return "✅ Found" if r.status_code == 200 else "❌ Missing"
+    except:
+        return "⚠️ Error checking"
+
+def get_domain_age(url):
+    try:
+        domain_name = url.replace("https://", "").replace("http://", "").split("/")[0]
+        w = whois.whois(domain_name)
+        creation_date = w.creation_date
+        if isinstance(creation_date, list): creation_date = creation_date[0]
+        return creation_date.strftime('%Y-%m-%d')
+    except:
+        return "Unknown"
+
+# 2. Data Gathering
+ads_status = check_ads_txt(TARGET_URL)
+age = get_domain_age(TARGET_URL)
+data_summary = f"Site: {TARGET_URL}, Ads.txt: {ads_status}, Domain Age: {age}"
+
+# 3. Gemini Call with Retry Logic
+prompt = f"Audit this site and provide a scorecard & fix guide in HTML: {data_summary}"
+
+response = None
+for attempt in range(3): # Try 3 times
+    try:
+        response = client.models.generate_content(model=MODEL_ID, contents=prompt)
+        break # Success! Exit the loop
+    except Exception as e:
+        if "503" in str(e) or "high demand" in str(e).lower():
+            print(f"Server busy, retrying in 10 seconds... (Attempt {attempt+1}/3)")
+            time.sleep(10)
+        else:
+            raise e
+
+if not response:
+    print("Failed to reach Gemini after 3 attempts.")
+    exit(1)
+
+# 4. Generate the Final HTML
+report_body = response.text.replace('```html', '').replace('```', '')
+
+html_template = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: sans-serif; max-width: 800px; margin: 40px auto; line-height: 1.6; background: #f0f2f5; }}
+        .card {{ background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
+        h1 {{ color: #1a73e8; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+        th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Website Review: {TARGET_URL}</h1>
+        <div>{report_body}</div>
+        <hr>
+        <p><small>Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</small></p>
+    </div>
+</body>
+</html>
+"""
+
+with open("index.html", "w", encoding="utf-8") as f:
+    f.write(html_template)
