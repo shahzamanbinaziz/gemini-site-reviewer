@@ -7,87 +7,82 @@ import whois
 from bs4 import BeautifulSoup
 
 # 1. Configuration
-TARGET_URL = os.environ.get("TARGET_URL", "https://google.com")
+TARGET_URL = os.environ.get("TARGET_URL", "https://propakistani.pk")
 if not TARGET_URL.startswith("http"):
     TARGET_URL = f"https://{TARGET_URL}"
 
-# Setup Client
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 MODEL_ID = "gemini-2.0-flash"
 
 def get_audit_data(url):
-    results = {"ads_txt": "Unknown", "title": "N/A", "links": []}
+    results = {"ads_txt": "Unknown", "title": "N/A"}
     try:
         # Check Ads.txt
         ads_url = f"{url.rstrip('/')}/ads.txt"
-        r = requests.get(ads_url, timeout=5)
-        results["ads_txt"] = "✅ Found/Valid" if r.status_code == 200 else "❌ Missing"
+        r = requests.get(ads_url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        results["ads_txt"] = "✅ Found" if r.status_code == 200 else "❌ Missing"
         
-        # Check Title/SEO
-        page = requests.get(url, timeout=10)
+        # Check Title
+        page = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
         soup = BeautifulSoup(page.text, 'html.parser')
-        results["title"] = soup.title.string if soup.title else "Missing Title"
-    except:
-        pass
+        results["title"] = soup.title.string.strip() if soup.title else "Missing Title"
+    except Exception as e:
+        results["ads_txt"] = f"Error: {str(e)[:30]}"
     return results
 
 # 2. Gather Data
 data = get_audit_data(TARGET_URL)
 
-# 3. Request Review with STRICT Formatting
-# We use 'system_instruction' to force Gemini to stay in 'Table Mode'
+# 3. Request Review (Simplified to prevent 503/Analysis Errors)
 prompt = f"""
-AUDIT REPORT FOR: {TARGET_URL}
-Ads.txt Status: {data['ads_txt']}
-Page Title: {data['title']}
+You are a Web Auditor. Write a report for {TARGET_URL}.
+Data: Ads.txt is {data['ads_txt']}, Title is {data['title']}.
 
-INSTRUCTIONS:
-1. Create a 3-column HTML TABLE: Check Name, Status, and Tutor's Grade (A-F).
-2. Below the table, provide a 'Tutor's Secret' section with 2 bullet points on how to improve this specific site.
-3. Use only standard HTML tags (<table>, <tr>, <td>, <h3>, <ul>).
-4. DO NOT include ```html tags or any markdown.
+Output exactly this structure in HTML:
+1. A table with 3 columns: Feature, Status, and Grade.
+2. A 'Tutor Advice' section with 3 bullet points.
+
+Rules: No markdown, no backticks, just raw HTML tags.
 """
 
-# Call Gemini with Retry
-response_text = "Analysis Error"
-for _ in range(3):
-    try:
-        # We add system_instruction here to make the AI more reliable
-        response = client.models.generate_content(
-            model=MODEL_ID, 
-            contents=prompt,
-            config={'system_instruction': "You are a web auditor. Output ONLY valid HTML body content. No backticks."}
-        )
-        response_text = response.text
-        break
-    except:
-        time.sleep(5)
+response_text = "<h3>Analysis Currently Unavailable</h3><p>The AI is busy. Please try running the workflow again in a few minutes.</p>"
 
-# 4. Save to File
-# Clean out any accidental markdown if Gemini ignores instructions
-clean_html = response_text.replace('```html', '').replace('```', '')
+for attempt in range(3):
+    try:
+        response = client.models.generate_content(model=MODEL_ID, contents=prompt)
+        if response.text:
+            response_text = response.text
+            break
+    except Exception as e:
+        print(f"Gemini Attempt {attempt+1} failed: {e}")
+        time.sleep(10)
+
+# 4. Final HTML Generation
+# We clean the text just in case the AI added backticks
+clean_body = response_text.replace('```html', '').replace('```', '')
 
 final_output = f"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <style>
-        body {{ font-family: sans-serif; padding: 50px; background: #f9f9f9; }}
-        .card {{ background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); border: 1px solid #eee; }}
-        table {{ width: 100%; border-collapse: collapse; margin: 20px 0; }}
-        th, td {{ padding: 15px; border-bottom: 1px solid #eee; text-align: left; }}
-        th {{ color: #1a73e8; text-transform: uppercase; font-size: 0.8em; letter-spacing: 1px; }}
-        h1 {{ color: #222; margin-bottom: 5px; }}
-        .url-badge {{ background: #1a73e8; color: white; padding: 4px 12px; border-radius: 5px; font-size: 0.9em; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 40px; background: #f0f2f5; }}
+        .report-card {{ background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); max-width: 800px; margin: auto; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+        th, td {{ padding: 12px; border: 1px solid #eee; text-align: left; }}
+        th {{ background: #1a73e8; color: white; }}
+        h1 {{ color: #1a73e8; border-bottom: 2px solid #1a73e8; padding-bottom: 10px; }}
+        .footer {{ margin-top: 30px; font-size: 0.8em; color: #777; border-top: 1px solid #eee; padding-top: 10px; }}
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>Site Audit Report</h1>
-        <span class="url-badge">{TARGET_URL}</span>
-        <hr style="margin: 30px 0; border: 0; border-top: 1px solid #eee;">
-        {clean_html}
-        <p style="margin-top:40px; color:#aaa; font-size:0.8em;">Generated on {datetime.now().strftime('%Y-%m-%d')}</p>
+    <div class="report-card">
+        <h1>Audit: {TARGET_URL}</h1>
+        <div>{clean_body}</div>
+        <div class="footer">
+            Analyzed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        </div>
     </div>
 </body>
 </html>
